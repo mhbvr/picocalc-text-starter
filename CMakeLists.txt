@@ -49,8 +49,10 @@ add_executable(picocalc-text-starter
         drivers/clib.c
         drivers/display.c
         drivers/display.h
-        drivers/fat32.c
-        drivers/fat32.h
+        fatfs/ff.c
+        fatfs/ffunicode.c
+        fatfs/diskio.c
+        fatfs/sd_card.c
         drivers/font-5x10.c
         drivers/font-8x10.c
         drivers/font.h
@@ -62,8 +64,6 @@ add_executable(picocalc-text-starter
         drivers/onboard_led.h
         drivers/picocalc.c
         drivers/picocalc.h
-        drivers/sdcard.c
-        drivers/sdcard.h
         drivers/southbridge.c
         drivers/southbridge.h
         )
@@ -89,6 +89,7 @@ target_link_libraries(picocalc-text-starter
 # Add the standard include files to the build
 target_include_directories(picocalc-text-starter PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
+        ${CMAKE_CURRENT_LIST_DIR}/fatfs
 )
 
 # Add any user requested libraries

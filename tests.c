@@ -4,7 +4,8 @@
 
 #include "pico/rand.h"
 #include "drivers/audio.h"
-#include "drivers/fat32.h"
+#include "fatfs/ff.h"
+#include "fatfs/sdfs.h"
 #include "drivers/lcd.h"
 #include "tests.h"
 
@@ -453,18 +454,20 @@ static bool fat32_test_setup()
 {
     printf("Setting up FAT32 test environment...\n");
 
-    if (fat32_set_current_dir("/tests") != FAT32_OK)
+    if (!sdfs_is_ready())
     {
-        fat32_file_t base_dir;
+        printf("FAIL: SD card not ready\n");
+        return false;
+    }
 
-        // Create the tests directory if it doesn't exist
-        if (fat32_dir_create(&base_dir, "/tests") != FAT32_OK)
+    if (f_chdir("/tests") != FR_OK)
+    {
+        f_mkdir("/tests");
+        if (f_chdir("/tests") != FR_OK)
         {
-            printf("FAIL: Cannot create or open tests directory\n");
+            printf("FAIL: Cannot create or enter tests directory\n");
             return false;
         }
-        fat32_close(&base_dir);
-        fat32_set_current_dir("/tests");
     }
 
     printf("Test directory ready.\n");
@@ -475,7 +478,7 @@ static bool fat32_test_cleanup()
 {
     printf("Cleaning up test files...\n");
 
-    fat32_set_current_dir("/");
+    f_chdir("/");
 
     printf("Cleanup complete.\n");
     return true;
@@ -483,32 +486,28 @@ static bool fat32_test_cleanup()
 
 static bool fat32_test_basic_operations()
 {
-    fat32_file_t file;
+    FIL file;
 
     printf("\n=== Basic Operations Test ===\n");
 
-    // Test directory creation
-    if (fat32_set_current_dir("/tests") != FAT32_OK)
+    if (f_chdir("/tests") != FR_OK)
     {
         printf("FAIL: Cannot change to tests directory\n");
         return false;
     }
 
-    // Test file creation
-    if (fat32_create(&file, "basic_test.txt") != FAT32_OK)
+    // Test file creation (or open existing)
+    FRESULT res = f_open(&file, "basic_test.txt", FA_CREATE_ALWAYS | FA_WRITE | FA_READ);
+    if (res != FR_OK)
     {
-        // File might exist, try to open it
-        if (fat32_open(&file, "basic_test.txt") != FAT32_OK)
-        {
-            printf("FAIL: Cannot create or open basic_test.txt\n");
-            return false;
-        }
+        printf("FAIL: Cannot create or open basic_test.txt\n");
+        return false;
     }
 
     // Test basic write
     const char *test_data = "Hello FAT32!";
-    size_t bytes_written;
-    if (fat32_write(&file, test_data, strlen(test_data), &bytes_written) != FAT32_OK)
+    UINT bytes_written;
+    if (f_write(&file, test_data, strlen(test_data), &bytes_written) != FR_OK)
     {
         printf("FAIL: Cannot write to basic_test.txt\n");
         return false;
@@ -516,22 +515,22 @@ static bool fat32_test_basic_operations()
 
     if (bytes_written != strlen(test_data))
     {
-        printf("FAIL: Wrote %zu bytes, expected %zu\n", bytes_written, strlen(test_data));
+        printf("FAIL: Wrote %u bytes, expected %zu\n", bytes_written, strlen(test_data));
         return false;
     }
 
-    fat32_close(&file);
+    f_close(&file);
 
     // Test file read
-    if (fat32_open(&file, "basic_test.txt") != FAT32_OK)
+    if (f_open(&file, "basic_test.txt", FA_READ | FA_OPEN_EXISTING) != FR_OK)
     {
         printf("FAIL: Cannot reopen basic_test.txt\n");
         return false;
     }
 
     char read_buffer[32];
-    size_t bytes_read;
-    if (fat32_read(&file, read_buffer, strlen(test_data), &bytes_read) != FAT32_OK)
+    UINT bytes_read;
+    if (f_read(&file, read_buffer, strlen(test_data), &bytes_read) != FR_OK)
     {
         printf("FAIL: Cannot read from basic_test.txt\n");
         return false;
@@ -543,7 +542,7 @@ static bool fat32_test_basic_operations()
         return false;
     }
 
-    fat32_close(&file);
+    f_close(&file);
 
     printf("PASS: Basic operations test\n");
     return true;
@@ -551,24 +550,21 @@ static bool fat32_test_basic_operations()
 
 static bool fat32_test_sector_boundaries()
 {
-    fat32_file_t file;
+    FIL file;
 
     printf("\n=== Sector Boundary Test ===\n");
 
-    if (fat32_set_current_dir("/tests") != FAT32_OK)
+    if (f_chdir("/tests") != FR_OK)
     {
         printf("FAIL: Cannot change to tests directory\n");
         return false;
     }
 
     // Create a file that spans multiple sectors (512 bytes each)
-    if (fat32_create(&file, "sector_test.bin") != FAT32_OK)
+    if (f_open(&file, "sector_test.bin", FA_CREATE_ALWAYS | FA_WRITE | FA_READ) != FR_OK)
     {
-        if (fat32_open(&file, "sector_test.bin") != FAT32_OK)
-        {
-            printf("FAIL: Cannot create sector_test.bin\n");
-            return false;
-        }
+        printf("FAIL: Cannot create sector_test.bin\n");
+        return false;
     }
 
     // Test writing exactly one sector
@@ -578,8 +574,8 @@ static bool fat32_test_sector_boundaries()
         sector_data[i] = (char)(i % 256);
     }
 
-    size_t bytes_written;
-    if (fat32_write(&file, sector_data, 512, &bytes_written) != FAT32_OK)
+    UINT bytes_written;
+    if (f_write(&file, sector_data, 512, &bytes_written) != FR_OK)
     {
         printf("FAIL: Cannot write 512 bytes\n");
         return false;
@@ -598,7 +594,7 @@ static bool fat32_test_sector_boundaries()
         extra_data[i] = (char)((i + 128) % 256);
     }
 
-    if (fat32_write(&file, extra_data, 256, &bytes_written) != FAT32_OK)
+    if (f_write(&file, extra_data, 256, &bytes_written) != FR_OK)
     {
         printf("FAIL: Cannot write additional 256 bytes\n");
         return false;
@@ -610,18 +606,18 @@ static bool fat32_test_sector_boundaries()
         return false;
     }
 
-    fat32_close(&file);
+    f_close(&file);
 
     // Verify the data
-    if (fat32_open(&file, "sector_test.bin") != FAT32_OK)
+    if (f_open(&file, "sector_test.bin", FA_READ | FA_OPEN_EXISTING) != FR_OK)
     {
         printf("FAIL: Cannot reopen sector_test.bin\n");
         return false;
     }
 
     char verify_buffer[768];
-    size_t bytes_read;
-    if (fat32_read(&file, verify_buffer, 768, &bytes_read) != FAT32_OK)
+    UINT bytes_read;
+    if (f_read(&file, verify_buffer, 768, &bytes_read) != FR_OK)
     {
         printf("FAIL: Cannot read 768 bytes\n");
         return false;
@@ -653,7 +649,7 @@ static bool fat32_test_sector_boundaries()
         }
     }
 
-    fat32_close(&file);
+    f_close(&file);
 
     printf("PASS: Sector boundary test\n");
     return true;
@@ -661,24 +657,21 @@ static bool fat32_test_sector_boundaries()
 
 static bool fat32_test_cluster_boundaries()
 {
-    fat32_file_t file;
+    FIL file;
 
     printf("\n=== Cluster Boundary Test ===\n");
 
-    if (fat32_set_current_dir("/tests") != FAT32_OK)
+    if (f_chdir("/tests") != FR_OK)
     {
         printf("FAIL: Cannot change to tests directory\n");
         return false;
     }
 
     // Create a file that spans multiple clusters (32 KiB each)
-    if (fat32_create(&file, "cluster_test.bin") != FAT32_OK)
+    if (f_open(&file, "cluster_test.bin", FA_CREATE_ALWAYS | FA_WRITE | FA_READ) != FR_OK)
     {
-        if (fat32_open(&file, "cluster_test.bin") != FAT32_OK)
-        {
-            printf("FAIL: Cannot create cluster_test.bin\n");
-            return false;
-        }
+        printf("FAIL: Cannot create cluster_test.bin\n");
+        return false;
     }
 
     printf("Writing cluster boundary test data...\n");
@@ -696,16 +689,16 @@ static bool fat32_test_cluster_boundaries()
             chunk_data[i] = (char)((offset + i) % 256);
         }
 
-        size_t bytes_written;
-        if (fat32_write(&file, chunk_data, chunk_size, &bytes_written) != FAT32_OK)
+        UINT bytes_written;
+        if (f_write(&file, chunk_data, chunk_size, &bytes_written) != FR_OK)
         {
-            printf("FAIL: Cannot write chunk at offset %lu\n", offset);
+            printf("FAIL: Cannot write chunk at offset %lu\n", (unsigned long)offset);
             return false;
         }
 
         if (bytes_written != chunk_size)
         {
-            printf("FAIL: Wrote %u bytes, expected %lu\n", bytes_written, chunk_size);
+            printf("FAIL: Wrote %u bytes, expected %lu\n", bytes_written, (unsigned long)chunk_size);
             return false;
         }
 
@@ -718,19 +711,19 @@ static bool fat32_test_cluster_boundaries()
 
     // Write additional data to cross cluster boundary
     const char *boundary_data = "CLUSTER_BOUNDARY_MARKER";
-    size_t bytes_written;
-    if (fat32_write(&file, boundary_data, strlen(boundary_data), &bytes_written) != FAT32_OK)
+    UINT bytes_written;
+    if (f_write(&file, boundary_data, strlen(boundary_data), &bytes_written) != FR_OK)
     {
         printf("FAIL: Cannot write boundary marker\n");
         return false;
     }
 
-    fat32_close(&file);
+    f_close(&file);
 
     printf("Verifying cluster boundary test data...\n");
 
     // Verify the data
-    if (fat32_open(&file, "cluster_test.bin") != FAT32_OK)
+    if (f_open(&file, "cluster_test.bin", FA_READ | FA_OPEN_EXISTING) != FR_OK)
     {
         printf("FAIL: Cannot reopen cluster_test.bin\n");
         return false;
@@ -739,16 +732,16 @@ static bool fat32_test_cluster_boundaries()
     // Verify first cluster in chunks
     for (uint32_t offset = 0; offset < cluster_size; offset += chunk_size)
     {
-        size_t bytes_read;
-        if (fat32_read(&file, chunk_data, chunk_size, &bytes_read) != FAT32_OK)
+        UINT bytes_read;
+        if (f_read(&file, chunk_data, chunk_size, &bytes_read) != FR_OK)
         {
-            printf("FAIL: Cannot read chunk at offset %lu\n", offset);
+            printf("FAIL: Cannot read chunk at offset %lu\n", (unsigned long)offset);
             return false;
         }
 
         if (bytes_read != chunk_size)
         {
-            printf("FAIL: Read %u bytes, expected %lu\n", bytes_read, chunk_size);
+            printf("FAIL: Read %u bytes, expected %lu\n", bytes_read, (unsigned long)chunk_size);
             return false;
         }
 
@@ -757,7 +750,7 @@ static bool fat32_test_cluster_boundaries()
         {
             if (chunk_data[i] != (char)((offset + i) % 256))
             {
-                printf("FAIL: Data mismatch at offset %lu\n", offset + i);
+                printf("FAIL: Data mismatch at offset %lu\n", (unsigned long)(offset + i));
                 return false;
             }
         }
@@ -771,8 +764,8 @@ static bool fat32_test_cluster_boundaries()
 
     // Verify boundary marker
     char boundary_buffer[32];
-    size_t bytes_read;
-    if (fat32_read(&file, boundary_buffer, strlen(boundary_data), &bytes_read) != FAT32_OK)
+    UINT bytes_read;
+    if (f_read(&file, boundary_buffer, strlen(boundary_data), &bytes_read) != FR_OK)
     {
         printf("FAIL: Cannot read boundary marker\n");
         return false;
@@ -785,7 +778,7 @@ static bool fat32_test_cluster_boundaries()
         return false;
     }
 
-    fat32_close(&file);
+    f_close(&file);
 
     printf("PASS: Cluster boundary test\n");
     return true;
@@ -793,34 +786,31 @@ static bool fat32_test_cluster_boundaries()
 
 static bool fat32_test_many_files()
 {
-    fat32_file_t dir;
-    fat32_file_t file;
-    fat32_error_t result;
+    FIL file;
+    FRESULT result;
 
     printf("\n=== Many Files Test ===\n");
 
-    if (fat32_set_current_dir("/tests") != FAT32_OK)
+    if (f_chdir("/tests") != FR_OK)
     {
         printf("FAIL: Cannot open tests directory\n");
         return false;
     }
 
-    // Create subdirectory for many files test
-    if (fat32_dir_create(&dir, "many_files") != FAT32_OK)
+    // Create subdirectory for many files test (or enter existing)
+    result = f_mkdir("many_files");
+    if (result == FR_OK || result == FR_EXIST)
     {
-        if (fat32_open(&dir, "many_files") != FAT32_OK)
+        if (f_chdir("many_files") != FR_OK)
         {
-            printf("FAIL: Cannot create many_files directory\n");
+            printf("FAIL: Cannot switch to many_files directory\n");
             return false;
         }
     }
     else
     {
-        if (fat32_set_current_dir("many_files") != FAT32_OK)
-        {
-            printf("FAIL: Cannot switch to many_files directory\n");
-            return false;
-        }
+        printf("FAIL: Cannot create many_files directory\n");
+        return false;
     }
 
     printf("Creating multiple files...\n");
@@ -835,31 +825,22 @@ static bool fat32_test_many_files()
         snprintf(filename, sizeof(filename), "file_%04d.txt", i);
         snprintf(file_content, sizeof(file_content), "This is test file number %d\n", i);
 
-        if ((result = fat32_create(&file, filename)) != FAT32_OK)
+        result = f_open(&file, filename, FA_CREATE_ALWAYS | FA_WRITE);
+        if (result != FR_OK)
         {
-            if (result == FAT32_ERROR_FILE_EXISTS)
-            {
-                if (fat32_open(&file, filename) != FAT32_OK)
-                {
-                    printf("FAIL: Cannot create file %s\n", filename);
-                    return false;
-                }
-            }
-            else
-            {
-                printf("FAIL: Cannot create or open file %s, error %s\n", filename, fat32_error_string(result));
-                return false;
-            }
-        }
-
-        size_t bytes_written;
-        if ((result = fat32_write(&file, file_content, strlen(file_content), &bytes_written)) != FAT32_OK)
-        {
-            printf("FAIL: Cannot write to file %s, error %s\n", filename, fat32_error_string(result));
+            printf("FAIL: Cannot create or open file %s, error %d\n", filename, (int)result);
             return false;
         }
 
-        fat32_close(&file);
+        UINT bytes_written;
+        result = f_write(&file, file_content, strlen(file_content), &bytes_written);
+        if (result != FR_OK)
+        {
+            printf("FAIL: Cannot write to file %s, error %d\n", filename, (int)result);
+            return false;
+        }
+
+        f_close(&file);
 
         if ((i + 1) % 20 == 0)
         {
@@ -881,15 +862,15 @@ static bool fat32_test_many_files()
         snprintf(filename, sizeof(filename), "file_%04d.txt", i);
         snprintf(file_content, sizeof(file_content), "This is test file number %d\n", i);
 
-        if (fat32_open(&file, filename) != FAT32_OK)
+        if (f_open(&file, filename, FA_READ | FA_OPEN_EXISTING) != FR_OK)
         {
             printf("FAIL: Cannot open file %s for verification\n", filename);
             return false;
         }
 
         char read_buffer[64];
-        size_t bytes_read;
-        if (fat32_read(&file, read_buffer, strlen(file_content), &bytes_read) != FAT32_OK)
+        UINT bytes_read;
+        if (f_read(&file, read_buffer, strlen(file_content), &bytes_read) != FR_OK)
         {
             printf("FAIL: Cannot read file %s\n", filename);
             return false;
@@ -902,7 +883,7 @@ static bool fat32_test_many_files()
             return false;
         }
 
-        fat32_close(&file);
+        f_close(&file);
 
         if (user_interrupt)
         {
@@ -911,7 +892,7 @@ static bool fat32_test_many_files()
         }
     }
 
-    if (fat32_set_current_dir("..") != FAT32_OK)
+    if (f_chdir("..") != FR_OK)
     {
         printf("FAIL: Cannot switch to parent directory\n");
         return false;
@@ -923,11 +904,11 @@ static bool fat32_test_many_files()
 
 static bool fat32_test_large_files()
 {
-    fat32_file_t file;
+    FIL file;
 
     printf("\n=== Large Files Test ===\n");
 
-    if (fat32_set_current_dir("/tests") != FAT32_OK)
+    if (f_chdir("/tests") != FR_OK)
     {
         printf("FAIL: Cannot change to tests directory\n");
         return false;
@@ -957,13 +938,10 @@ static bool fat32_test_large_files()
                test_files[test_idx].name,
                test_files[test_idx].description);
 
-        if (fat32_create(&file, test_files[test_idx].name) != FAT32_OK)
+        if (f_open(&file, test_files[test_idx].name, FA_CREATE_ALWAYS | FA_WRITE | FA_READ) != FR_OK)
         {
-            if (fat32_open(&file, test_files[test_idx].name) != FAT32_OK)
-            {
-                printf("FAIL: Cannot create %s\n", test_files[test_idx].name);
-                return false;
-            }
+            printf("FAIL: Cannot create %s\n", test_files[test_idx].name);
+            return false;
         }
 
         // Write test pattern
@@ -982,18 +960,18 @@ static bool fat32_test_large_files()
                 chunk_data[i] = (char)((offset + i) % 256);
             }
 
-            size_t bytes_written;
-            if (fat32_write(&file, chunk_data, write_size, &bytes_written) != FAT32_OK)
+            UINT bytes_written;
+            if (f_write(&file, chunk_data, write_size, &bytes_written) != FR_OK)
             {
                 printf("FAIL: Cannot write to %s at offset %lu\n",
-                       test_files[test_idx].name, offset);
+                       test_files[test_idx].name, (unsigned long)offset);
                 return false;
             }
 
             if (bytes_written != write_size)
             {
                 printf("FAIL: Wrote %u bytes, expected %lu\n",
-                       bytes_written, write_size);
+                       bytes_written, (unsigned long)write_size);
                 return false;
             }
 
@@ -1007,20 +985,20 @@ static bool fat32_test_large_files()
             }
         }
 
-        fat32_close(&file);
+        f_close(&file);
 
         // Verify file size and some content
-        if (fat32_open(&file, test_files[test_idx].name) != FAT32_OK)
+        if (f_open(&file, test_files[test_idx].name, FA_READ | FA_OPEN_EXISTING) != FR_OK)
         {
             printf("FAIL: Cannot reopen %s\n", test_files[test_idx].name);
             return false;
         }
 
         // Read and verify first chunk
-        size_t verify_size = (test_files[test_idx].size < chunk_size) ? test_files[test_idx].size : chunk_size;
+        uint32_t verify_size = (test_files[test_idx].size < chunk_size) ? test_files[test_idx].size : chunk_size;
 
-        size_t bytes_read;
-        if (fat32_read(&file, chunk_data, verify_size, &bytes_read) != FAT32_OK)
+        UINT bytes_read;
+        if (f_read(&file, chunk_data, verify_size, &bytes_read) != FR_OK)
         {
             printf("FAIL: Cannot read from %s\n", test_files[test_idx].name);
             return false;
@@ -1028,7 +1006,7 @@ static bool fat32_test_large_files()
 
         if (bytes_read != verify_size)
         {
-            printf("FAIL: Read %u bytes, expected %u\n", bytes_read, verify_size);
+            printf("FAIL: Read %u bytes, expected %lu\n", bytes_read, (unsigned long)verify_size);
             return false;
         }
 
@@ -1038,12 +1016,12 @@ static bool fat32_test_large_files()
             if (chunk_data[i] != (char)(i % 256))
             {
                 printf("FAIL: Data mismatch in %s at byte %lu\n",
-                       test_files[test_idx].name, i);
+                       test_files[test_idx].name, (unsigned long)i);
                 return false;
             }
         }
 
-        fat32_close(&file);
+        f_close(&file);
 
         if (user_interrupt)
         {
@@ -1058,60 +1036,56 @@ static bool fat32_test_large_files()
 
 static bool fat32_test_delete_operations()
 {
-    fat32_file_t file;
-    fat32_file_t dir;
+    FIL file;
+    FILINFO fi;
 
     printf("\n=== Delete Operations Test ===\n");
 
-    if (fat32_set_current_dir("/tests") != FAT32_OK)
+    if (f_chdir("/tests") != FR_OK)
     {
         printf("FAIL: Cannot change to tests directory\n");
         return false;
     }
 
     // Create and delete a file
-    if (fat32_create(&file, "delete_me.txt") != FAT32_OK &&
-        fat32_open(&file, "delete_me.txt") != FAT32_OK)
+    if (f_open(&file, "delete_me.txt", FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
     {
-        printf("FAIL: Cannot create or open delete_me.txt\n");
+        printf("FAIL: Cannot create delete_me.txt\n");
         return false;
     }
-    fat32_close(&file);
+    f_close(&file);
 
-    if (fat32_delete("delete_me.txt") != FAT32_OK)
+    if (f_unlink("delete_me.txt") != FR_OK)
     {
         printf("FAIL: Cannot delete delete_me.txt\n");
         return false;
     }
 
     // Verify file is deleted
-    if (fat32_open(&file, "delete_me.txt") == FAT32_OK)
+    if (f_stat("delete_me.txt", &fi) == FR_OK)
     {
         printf("FAIL: delete_me.txt still exists after deletion\n");
-        fat32_close(&file);
         return false;
     }
 
-    // Create and delete a directory
-    if (fat32_dir_create(&dir, "delete_dir") != FAT32_OK &&
-        fat32_open(&dir, "delete_dir") != FAT32_OK)
+    // Create and delete an empty directory
+    FRESULT res = f_mkdir("delete_dir");
+    if (res != FR_OK && res != FR_EXIST)
     {
-        printf("FAIL: Cannot create or open delete_dir\n");
+        printf("FAIL: Cannot create delete_dir\n");
         return false;
     }
-    fat32_close(&dir);
 
-    if (fat32_delete("delete_dir") != FAT32_OK)
+    if (f_unlink("delete_dir") != FR_OK)
     {
         printf("FAIL: Cannot delete delete_dir\n");
         return false;
     }
 
     // Verify directory is deleted
-    if (fat32_open(&dir, "delete_dir") == FAT32_OK)
+    if (f_stat("delete_dir", &fi) == FR_OK)
     {
         printf("FAIL: delete_dir still exists after deletion\n");
-        fat32_close(&dir);
         return false;
     }
 
