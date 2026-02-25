@@ -254,18 +254,131 @@ void lcd_blit(const uint16_t *pixels, uint16_t x, uint16_t y, uint16_t width, ui
     lcd_enable_interrupts();
 }
 
+// Write a single colour value directly to the SPI bus count times, without a pixel buffer.
+static void lcd_send_pixels(uint16_t colour, uint32_t count)
+{
+    // DO NOT MOVE THE spi_set_format() OR THE gpio_put(LCD_DCX) CALLS!
+    // They are placed before the gpio_put(LCD_CSX) to ensure that a minimum
+    // chip select high pulse width is achieved (at least 40ns)
+    spi_set_format(LCD_SPI, 16, 0, 0, SPI_MSB_FIRST);
+    gpio_put(LCD_DCX, 1); // Data
+    gpio_put(LCD_CSX, 0);
+    for (uint32_t i = 0; i < count; i++)
+        spi_write16_blocking(LCD_SPI, &colour, 1);
+    gpio_put(LCD_CSX, 1);
+    spi_set_format(LCD_SPI, 8, 0, 0, SPI_MSB_FIRST);
+}
+
+// Draw a single pixel, clipping to display bounds
+static void lcd_put_pixel(uint16_t colour, int16_t x, int16_t y)
+{
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT)
+        return;
+    lcd_solid_rectangle(colour, (uint16_t)x, (uint16_t)y, 1, 1);
+}
+
+// Draw a horizontal line, clipping to display bounds
+static void lcd_put_hline(uint16_t colour, int16_t x, int16_t y, int16_t width)
+{
+    if (y < 0 || y >= HEIGHT || width <= 0)
+        return;
+    if (x < 0)             { width += x; x = 0; }
+    if (x + width > WIDTH) { width = WIDTH - x; }
+    if (width <= 0)
+        return;
+    lcd_solid_rectangle(colour, (uint16_t)x, (uint16_t)y, (uint16_t)width, 1);
+}
+
 // Draw a solid rectangle on the display
 void lcd_solid_rectangle(uint16_t colour, uint16_t x, uint16_t y, uint16_t width, uint16_t height)
 {
-    static uint16_t pixels[WIDTH];
+    lcd_disable_interrupts();
 
-    for (uint16_t row = 0; row < height; row++)
+    if (y >= lcd_scroll_top && y < HEIGHT - lcd_scroll_bottom)
     {
-        for (uint16_t i = 0; i < width; i++)
+        uint16_t y_virtual = (lcd_y_offset + y) % lcd_memory_scroll_height;
+        uint16_t rows_to_wrap = lcd_memory_scroll_height - y_virtual;
+        uint16_t first_rows = (height <= rows_to_wrap) ? height : rows_to_wrap;
+
+        lcd_set_window(x, lcd_scroll_top + y_virtual, x + width - 1,
+                       lcd_scroll_top + y_virtual + first_rows - 1);
+        lcd_send_pixels(colour, (uint32_t)width * first_rows);
+
+        if (height > rows_to_wrap)
         {
-            pixels[i] = colour;
+            // Rectangle crosses the frame memory wrap boundary — write the remainder
+            // from the start of the scroll area
+            uint16_t remaining = height - rows_to_wrap;
+            lcd_set_window(x, lcd_scroll_top, x + width - 1, lcd_scroll_top + remaining - 1);
+            lcd_send_pixels(colour, (uint32_t)width * remaining);
         }
-        lcd_blit(pixels, x, y + row, width, 1);
+    }
+    else
+    {
+        lcd_set_window(x, y, x + width - 1, y + height - 1);
+        lcd_send_pixels(colour, (uint32_t)width * height);
+    }
+
+    lcd_enable_interrupts();
+}
+
+// Draw a circle outline using the Midpoint (Bresenham) circle algorithm
+void lcd_draw_circle(uint16_t colour, uint16_t cx, uint16_t cy, uint16_t radius)
+{
+    int16_t x = (int16_t)radius;
+    int16_t y = 0;
+    int16_t p = 1 - (int16_t)radius;
+
+    while (x >= y)
+    {
+        lcd_put_pixel(colour, (int16_t)(cx + x), (int16_t)(cy + y));
+        lcd_put_pixel(colour, (int16_t)(cx + y), (int16_t)(cy + x));
+        lcd_put_pixel(colour, (int16_t)(cx - y), (int16_t)(cy + x));
+        lcd_put_pixel(colour, (int16_t)(cx - x), (int16_t)(cy + y));
+        lcd_put_pixel(colour, (int16_t)(cx - x), (int16_t)(cy - y));
+        lcd_put_pixel(colour, (int16_t)(cx - y), (int16_t)(cy - x));
+        lcd_put_pixel(colour, (int16_t)(cx + y), (int16_t)(cy - x));
+        lcd_put_pixel(colour, (int16_t)(cx + x), (int16_t)(cy - y));
+
+        y++;
+        if (p <= 0)
+            p += 2 * y + 1;
+        else
+        {
+            x--;
+            p += 2 * (y - x) + 1;
+        }
+    }
+}
+
+// Draw a filled circle using the Midpoint (Bresenham) circle algorithm.
+// Each iteration draws up to four horizontal spans — guards on y==0 and x==y
+// prevent writing the same row twice at the axes and diagonal.
+void lcd_fill_circle(uint16_t colour, uint16_t cx, uint16_t cy, uint16_t radius)
+{
+    int16_t x = (int16_t)radius;
+    int16_t y = 0;
+    int16_t p = 1 - (int16_t)radius;
+
+    while (x >= y)
+    {
+        lcd_put_hline(colour, (int16_t)(cx - x), (int16_t)(cy + y), 2 * x + 1);
+        if (y != 0)
+            lcd_put_hline(colour, (int16_t)(cx - x), (int16_t)(cy - y), 2 * x + 1);
+        if (x != y)
+        {
+            lcd_put_hline(colour, (int16_t)(cx - y), (int16_t)(cy + x), 2 * y + 1);
+            lcd_put_hline(colour, (int16_t)(cx - y), (int16_t)(cy - x), 2 * y + 1);
+        }
+
+        y++;
+        if (p <= 0)
+            p += 2 * y + 1;
+        else
+        {
+            x--;
+            p += 2 * (y - x) + 1;
+        }
     }
 }
 

@@ -1234,13 +1234,68 @@ void fat32test()
     printf("- Data integrity across boundaries\n");
 }
 
+void rectangletest()
+{
+    lcd_enable_cursor(false);
+    lcd_clear_screen();
+
+    for (int i = 0; i < 50; i++)
+    {
+        if (user_interrupt)
+        {
+            printf("\nUser interrupt detected.\nStopping rectangle test.\n");
+            break;
+        }
+
+        uint16_t colour = (uint16_t)get_rand_32();
+        uint16_t x = get_rand_32() % WIDTH;
+        uint16_t y = get_rand_32() % HEIGHT;
+        uint16_t w = 10 + get_rand_32() % (WIDTH / 4);
+        uint16_t h = 10 + get_rand_32() % (HEIGHT / 4);
+        if (x + w > WIDTH)  w = WIDTH  - x;
+        if (y + h > HEIGHT) h = HEIGHT - y;
+
+        lcd_solid_rectangle(colour, x, y, w, h);
+        sleep_ms(50);
+    }
+
+    lcd_enable_cursor(true);
+}
+
+void circletest()
+{
+    lcd_enable_cursor(false);
+    lcd_clear_screen();
+
+    for (int i = 0; i < 50; i++)
+    {
+        if (user_interrupt)
+        {
+            printf("\nUser interrupt detected.\nStopping circle test.\n");
+            break;
+        }
+
+        uint16_t colour = (uint16_t)get_rand_32();
+        uint16_t radius = 5 + get_rand_32() % 50;
+        uint16_t cx = radius + get_rand_32() % (WIDTH  - 2 * radius);
+        uint16_t cy = radius + get_rand_32() % (HEIGHT - 2 * radius);
+
+        lcd_fill_circle(colour, cx, cy, radius);
+        sleep_ms(50);
+    }
+
+    lcd_enable_cursor(true);
+}
+
 // Song table for easy access
 const test_t tests[] = {
     {"audio", audiotest, "Audio Driver Test"},
+    {"circles", circletest, "Filled Circle Drawing Test"},
     {"display", displaytest, "Display Driver Test"},
     {"fat32", fat32test, "FAT32 File System Test"},
     {"keyboard", keyboardtest, "Keyboard Driver Test"},
     {"lcd", lcdtest, "LCD Driver Test"},
+    {"rectangles", rectangletest, "Solid Rectangle Drawing Test"},
     {NULL, NULL, NULL} // End marker
 };
 

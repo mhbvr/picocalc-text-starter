@@ -96,6 +96,8 @@ void lcd_write16_buf(const uint16_t *buffer, size_t len);
 // Display window and drawing functions
 void lcd_blit(const uint16_t *pixels, uint16_t x, uint16_t y, uint16_t width, uint16_t height);
 void lcd_solid_rectangle(uint16_t colour, uint16_t x, uint16_t y, uint16_t width, uint16_t height);
+void lcd_draw_circle(uint16_t colour, uint16_t cx, uint16_t cy, uint16_t radius);
+void lcd_fill_circle(uint16_t colour, uint16_t cx, uint16_t cy, uint16_t radius);
 
 // Scrolling functions
 void lcd_define_scrolling(uint16_t top_fixed_area, uint16_t bottom_fixed_area);
