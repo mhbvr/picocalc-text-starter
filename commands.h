@@ -51,4 +51,6 @@ void sd_rm(void);
 void sd_rm_filename(const char *filename);
 void sd_rmdir(void);
 void sd_rmdir_dirname(const char *dirname);
+void sd_rmrf(void);
+void sd_rmrf_dirname(const char *dirname);
 

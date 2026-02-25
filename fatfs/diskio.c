@@ -32,19 +32,15 @@ DSTATUS disk_status(BYTE pdrv)
 DRESULT disk_read(BYTE pdrv, BYTE *buf, LBA_t sector, UINT count)
 {
     if (pdrv != 0) return RES_PARERR;
-    for (UINT i = 0; i < count; i++) {
-        if (!sd_read_block(sector + i, buf + i * 512)) return RES_ERROR;
-    }
-    return RES_OK;
+    // Use sd_read_blocks() for any count: issues a single CMD18 when count > 1
+    return sd_read_blocks(sector, count, buf) ? RES_OK : RES_ERROR;
 }
 
 DRESULT disk_write(BYTE pdrv, const BYTE *buf, LBA_t sector, UINT count)
 {
     if (pdrv != 0) return RES_PARERR;
-    for (UINT i = 0; i < count; i++) {
-        if (!sd_write_block(sector + i, buf + i * 512)) return RES_ERROR;
-    }
-    return RES_OK;
+    // Use sd_write_blocks() for any count: issues a single CMD25 when count > 1
+    return sd_write_blocks(sector, count, buf) ? RES_OK : RES_ERROR;
 }
 
 DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buf)
@@ -54,6 +50,12 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buf)
         case CTRL_SYNC:       return RES_OK;
         case GET_SECTOR_SIZE: *(WORD  *)buf = 512; return RES_OK;
         case GET_BLOCK_SIZE:  *(DWORD *)buf = 1;   return RES_OK;
+        case GET_SECTOR_COUNT: {
+            uint32_t n;
+            if (!sd_get_sector_count(&n)) return RES_ERROR;
+            *(LBA_t *)buf = n;
+            return RES_OK;
+        }
         default:              return RES_PARERR;
     }
 }

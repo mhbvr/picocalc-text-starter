@@ -44,6 +44,7 @@ static const command_t commands[] = {
     {"reset", reset, "Reset the device"},
     {"rm", sd_rm, "Remove a file"},
     {"rmdir", sd_rmdir, "Remove a directory"},
+    {"rmrf", sd_rmrf, "Recursively remove a directory"},
     {"sdcard", sd_status, "Show SD card status"},
     {"songs", show_song_library, "Show song library"},
     {"test", test, "Run a test"},
@@ -236,6 +237,10 @@ void run_command(const char *command)
             else if (strcmp(cmd_args[0], "rmdir") == 0 && cmd_args[1] != NULL)
             {
                 sd_rmdir_dirname(condense(cmd_args[1]));
+            }
+            else if (strcmp(cmd_args[0], "rmrf") == 0 && cmd_args[1] != NULL)
+            {
+                sd_rmrf_dirname(condense(cmd_args[1]));
             }
             else if (strcmp(cmd_args[0], "mv") == 0 && cmd_args[1] != NULL && cmd_args[2] != NULL)
             {
@@ -932,6 +937,93 @@ void sd_rmdir_dirname(const char *dirname)
     }
 
     printf("Directory '%s' removed.\n", dirname);
+}
+
+void sd_rmrf()
+{
+    printf("Error: No directory name specified.\n");
+    printf("Usage: rmrf <dirname>\n");
+    printf("Example: rmrf tests\n");
+}
+
+// Recursive helper: delete all contents of path, then path itself.
+// Returns FR_OK on success, or the first FatFS error encountered.
+// depth_limit prevents runaway recursion on deeply nested structures.
+static FRESULT rmrf_recursive(const char *path, int depth_limit)
+{
+    if (depth_limit <= 0)
+    {
+        printf("Error: Directory too deeply nested.\n");
+        return FR_INT_ERR;
+    }
+
+    DIR dj;
+    FILINFO finfo;
+    FRESULT result = f_opendir(&dj, path);
+    if (result != FR_OK) return result;
+
+    // path (FF_LFN_BUF) + "/" (1) + fname (FF_LFN_BUF) + NUL (1)
+    char child[FF_LFN_BUF + FF_LFN_BUF + 2];
+    for (;;)
+    {
+        result = f_readdir(&dj, &finfo);
+        if (result != FR_OK || finfo.fname[0] == '\0') break;
+
+        // Build child path manually to avoid snprintf truncation warnings.
+        // Explicit length check catches paths that somehow exceed our bounds.
+        size_t plen = strlen(path);
+        bool need_sep = (plen > 0 && path[plen - 1] != '/');
+        size_t flen = strlen(finfo.fname);
+        if (plen + need_sep + flen >= sizeof(child))
+        {
+            printf("Error: Path too long.\n");
+            result = FR_INT_ERR;
+            break;
+        }
+        memcpy(child, path, plen);
+        if (need_sep) child[plen++] = '/';
+        memcpy(child + plen, finfo.fname, flen + 1); // +1 copies the NUL
+
+        if (finfo.fattrib & AM_DIR)
+            result = rmrf_recursive(child, depth_limit - 1);
+        else
+            result = f_unlink(child);
+
+        if (result != FR_OK) break;
+    }
+
+    f_closedir(&dj);
+    if (result != FR_OK) return result;
+
+    // Directory is now empty — remove it
+    return f_unlink(path);
+}
+
+void sd_rmrf_dirname(const char *dirname)
+{
+    if (dirname == NULL || strlen(dirname) == 0)
+    {
+        printf("Error: No directory name specified.\n");
+        printf("Usage: rmrf <dirname>\n");
+        printf("Example: rmrf tests\n");
+        return;
+    }
+
+    // Refuse to wipe the root directory
+    if (strcmp(dirname, "/") == 0 || strcmp(dirname, "") == 0)
+    {
+        printf("Error: Refusing to delete root directory.\n");
+        return;
+    }
+
+    FRESULT result = rmrf_recursive(dirname, 16);
+    if (result != FR_OK)
+    {
+        printf("Error: FatFS result %d\n", (int)result);
+        return;
+    }
+
+    printf("'%s' removed.\n", dirname);
 }
 
 void sd_mv(void)
