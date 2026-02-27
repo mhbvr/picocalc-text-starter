@@ -51,6 +51,7 @@ add_executable(picocalc-text-starter
         drivers/display.h
         fatfs/ff.c
         fatfs/ffunicode.c
+        fatfs/crc.c
         fatfs/diskio.c
         fatfs/sd_card.c
         drivers/font-5x10.c

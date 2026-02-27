@@ -19,7 +19,7 @@ static repeating_timer_t detect_timer;
 DSTATUS disk_initialize(BYTE pdrv)
 {
     if (pdrv != 0) return STA_NOINIT;
-    return sd_card_init() ? 0 : STA_NOINIT;
+    return sd_card_init() == SD_ERR_NONE ? 0 : STA_NOINIT;
 }
 
 DSTATUS disk_status(BYTE pdrv)
@@ -33,14 +33,14 @@ DRESULT disk_read(BYTE pdrv, BYTE *buf, LBA_t sector, UINT count)
 {
     if (pdrv != 0) return RES_PARERR;
     // Use sd_read_blocks() for any count: issues a single CMD18 when count > 1
-    return sd_read_blocks(sector, count, buf) ? RES_OK : RES_ERROR;
+    return sd_read_blocks(sector, count, buf) == SD_ERR_NONE ? RES_OK : RES_ERROR;
 }
 
 DRESULT disk_write(BYTE pdrv, const BYTE *buf, LBA_t sector, UINT count)
 {
     if (pdrv != 0) return RES_PARERR;
     // Use sd_write_blocks() for any count: issues a single CMD25 when count > 1
-    return sd_write_blocks(sector, count, buf) ? RES_OK : RES_ERROR;
+    return sd_write_blocks(sector, count, buf) == SD_ERR_NONE ? RES_OK : RES_ERROR;
 }
 
 DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buf)
@@ -52,7 +52,7 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buf)
         case GET_BLOCK_SIZE:  *(DWORD *)buf = 1;   return RES_OK;
         case GET_SECTOR_COUNT: {
             uint32_t n;
-            if (!sd_get_sector_count(&n)) return RES_ERROR;
+            if (sd_get_sector_count(&n) != SD_ERR_NONE) return RES_ERROR;
             *(LBA_t *)buf = n;
             return RES_OK;
         }
